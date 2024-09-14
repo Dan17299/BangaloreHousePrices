@@ -1,0 +1,96 @@
+#import the used modules
+import pandas as pd
+import numpy as np
+from CC import x_train, x_test, y_train, y_test
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+#import the data set
+df = pd.read_csv(r"C:\Users\Daniel\Documents\Bengaluru_House_Data.csv")
+
+#drop any irrelevant columns
+df = df.drop(["availability", "area_type", "society"], axis = 'columns')
+df = df.dropna()
+
+#write functions for cleaning each column, and clean the column
+def size_clean(x):
+    return int(str(x).split()[0])
+
+df["size"] = df["size"].apply(size_clean)
+
+def range_to_num(x):
+    tokens = str(x).split('-')
+    if len(tokens) == 2:
+        return (float(tokens[0]) + float(tokens[1]))/2
+    try:
+        return float(x)
+    except:
+        return None
+
+#Change 'minor' locations to 'other'
+def other_location(x):
+    if x in loc_less_than_10:
+        return "Other"
+    else:
+        return x
+
+#remover any data points more than one std from the mean
+def remove_pps_outliers(df):
+    df_out = pd.DataFrame()
+    for key, subdf in df.groupby('location'):
+        m = np.mean(subdf.price_per_sqft)
+        s = np.std(subdf.price_per_sqft)
+        reduced_df = subdf[(subdf.price_per_sqft > (m - s)) & (subdf.price_per_sqft < (m + s))]
+        df_out = pd.concat([df_out, reduced_df])
+    return df_out
+
+def remove_pricebedroom_outliers(df):
+    df_out = pd.DataFrame()
+    for key, subdf in df.groupby(['location', 'size']):
+        m = np.mean(subdf.price)
+        s = np.std(subdf.price)
+        reduced_df = subdf[(subdf.price > (m - s)) & (subdf.price < (m + s))]
+        df_out = pd.concat([df_out, reduced_df])
+    return df_out
+
+#apply the functions to the columns
+df["size"] = df["size"].apply(size_clean)
+df["total_sqft"] = df["total_sqft"].apply(range_to_num)
+df["price_per_sqft"] = df["price"]*100000/df["total_sqft"]
+loc_data = df.groupby("location")["location"].agg("count")
+loc_less_than_10 = loc_data[loc_data <= 10]
+df["location"] = df["location"].apply(other_location)
+df = remove_pps_outliers(df)
+df = remove_pricebedroom_outliers(df)
+df = df[df.bath <= df["size"] + 2]
+dummies = pd.get_dummies(df.location).astype(int)
+df = pd.concat([df, dummies], axis = 'columns')
+df = df.drop(["location", "Other"], axis = 'columns')
+
+#train the model
+x = df.drop("price", axis = 'columns')
+y = df.price
+x_train, x_test, y_train, y_test = train_test_split(x, y, train_size=0.7, random_state=10)
+l = LinearRegression()
+l.fit(x_train, y_train)
+
+# Prediction
+y_pred = l.predict(x_test)
+
+mae = mean_absolute_error(y_test, y_pred)
+print(f"Mean Absolute Error (MAE): {mae}")
+mse = mean_squared_error(y_test, y_pred)
+print(f"Mean Squared Error (MSE): {mse}")
+rmse = np.sqrt(mse)
+print(f"Root Mean Squared Error (RMSE): {rmse}")
+
+#function to predict price based on location, size, and no. bathrooms
+def predict_price(location, size, bath):
+    loc_index = np.where(x.columns == location)[0][0] if location in x.columns else None
+    x_input = np.zeros(len(x.columns))
+    x_input[0] = size
+    x_input[1] = bath
+    if loc_index:
+        x_input[loc_index] = 1
+    return l.predict([x_input])[0]
